@@ -2,86 +2,96 @@
 using Microsoft.Data.SqlClient;
 using System.Configuration;
 using System.Data;
+using System.Collections.Generic;
 
 ConnectionStringSettings settings =
             ConfigurationManager.ConnectionStrings["TripBooking"];
 
 string connectionString = settings.ConnectionString;
 
-string queryString = "Select * from [Route]";
-
 using (SqlConnection connection =
     new(connectionString))
 {
-    SqlDataAdapter adapter = new SqlDataAdapter(queryString, connection);
-    adapter.MissingSchemaAction = MissingSchemaAction.AddWithKey;
-    DataSet routes = new DataSet();
-    adapter.Fill(routes, "Routes");
-    var table = routes.Tables["Routes"];
-    foreach (DataRow row in table.Rows)
+    SqlDataAdapter customerBookTripAdapter = GetSqlDataAdapter(connection, "GetCustomerBookTrip", "InsertCustomerBookTrip", new List<SqlParameter>(){
+                new SqlParameter("@CustomerBookTrip_customerId", SqlDbType.BigInt) { SourceColumn = "customerId" },
+                new SqlParameter("@CustomerBookTrip_tripId", SqlDbType.BigInt) { SourceColumn = "tripId" },
+                new SqlParameter("@CustomerBookTrip_placeNumber", SqlDbType.Int) { SourceColumn = "placeNumber" },
+                new SqlParameter("@CustomerBookTrip_dateCreated", SqlDbType.DateTime) { SourceColumn = "dateCreated" },
+                new SqlParameter("@CustomerBookTrip_dateModified", SqlDbType.DateTime) { SourceColumn = "dateModified" },
+                new SqlParameter("@CustomerBookTrip_id", SqlDbType.BigInt) { SourceColumn = "id",Direction= ParameterDirection.Output },
+            });
+
+    SqlDataAdapter ticketAdapter = GetSqlDataAdapter(connection, "GetTicket", "InsertTicket", new List<SqlParameter>(){
+                new SqlParameter("@Ticket_customerBookTripId", SqlDbType.BigInt) { SourceColumn = "customerBookTripId" },
+                new SqlParameter("@Ticket_price", SqlDbType.Money) { SourceColumn = "price" },
+                new SqlParameter("@Ticket_sellerCode", SqlDbType.VarChar, 200) { SourceColumn = "sellerCode" },
+                new SqlParameter("@Ticket_dateCreated", SqlDbType.DateTime) { SourceColumn = "dateCreated" },
+                new SqlParameter("@Ticket_dateModified", SqlDbType.DateTime) { SourceColumn = "dateModified" },
+                new SqlParameter("@Ticket_id", SqlDbType.BigInt) { SourceColumn = "id",Direction= ParameterDirection.Output },
+            });
+
+    DataSet dataSet = new DataSet();
+    customerBookTripAdapter.Fill(dataSet);
+
+    var customerBookTrips = dataSet.Tables[0];
+
+    customerBookTrips.Rows.Add(
+        new object[]
+        {
+            customerBookTrips.Rows.Count,
+            4,
+            1,
+            5,
+            DateTime.Now,
+            DateTime.Now,
+        });
+    customerBookTripAdapter.Update(dataSet);
+
+    var cbtId = Int64.Parse(customerBookTrips.Rows[customerBookTrips.Rows.Count - 1]["id"].ToString());
+
+    DataSet tdataSet = new DataSet();
+    ticketAdapter.Fill(tdataSet);
+
+    var tickets = tdataSet.Tables[0];
+    tickets.Rows.Add(
+        new object[]
+        {
+            cbtId,
+            20000,
+            "SellerCode123",
+            DateTime.Now,
+            DateTime.Now.AddDays(5),
+        });
+    ticketAdapter.Update(tdataSet);
+    
+    foreach (DataRow row in tickets.Rows)
     {
-        Console.WriteLine($"id: {row["id"]}, routeDescription: {row["routeDescription"]}, [dateCreated]: {row["dateCreated"]}, , [dateModified]: {row["dateModified"]}");
+        Console.WriteLine($"Ticket ID: {row["customerBookTripId"]}, Price: {row["price"]}, Seller Code: {row["sellerCode"]}");
     }
+}
 
-    //update
-    adapter.UpdateCommand = new SqlCommand("Update [Route] set routeDescription = @RouteDescription where id = @Id", connection);
-    table.Rows[1]["routeDescription"] = "Hanoi to Quang Binh";
-    var parameterD = new SqlParameter()
+static SqlDataAdapter GetSqlDataAdapter(SqlConnection connection, string SelectProcedure, string InsertProcedure, List<SqlParameter> insertParameters)
+{
+    var adapter = new SqlDataAdapter()
     {
-        ParameterName = "@RouteDescription",
-        SqlDbType = SqlDbType.NVarChar,
-        Size = 300,
-        SourceColumn = "routeDescription",
-        SourceVersion = DataRowVersion.Current
+        SelectCommand = new SqlCommand()
+        {
+            CommandText = SelectProcedure,
+            Connection = connection,
+            CommandType = CommandType.StoredProcedure,
+        },
+        InsertCommand = new SqlCommand()
+        {
+            CommandText = InsertProcedure,
+            Connection = connection,
+            CommandType = CommandType.StoredProcedure,
+            UpdatedRowSource = UpdateRowSource.OutputParameters
+        },
+
+        AcceptChangesDuringUpdate = true,
     };
-    adapter.UpdateCommand.Parameters.Add(parameterD);
 
-    var parameter = new SqlParameter()
-    {
-        ParameterName = "@Id",
-        SqlDbType = SqlDbType.Int,
-        SourceColumn = "id",
-        SourceVersion = DataRowVersion.Original
-    };
-    adapter.UpdateCommand.Parameters.Add(parameter);
-    adapter.UpdateCommand.UpdatedRowSource = UpdateRowSource.FirstReturnedRecord;
-
-    //insert
-    //the ids for insert can be anything, would be neglected all the same
-    table.Rows.Add(new object[] {
-         40, "Saigon to Tra Vinh", DateTime.Now, DateTime.Now
-    });
-    table.Rows.Add(new object[] {
-         45, "Saigon to Vung Tau", DateTime.Now, DateTime.Now
-    });
-    adapter.InsertCommand = new SqlCommand("InsertRoutes", connection) { CommandType = CommandType.StoredProcedure };
-    adapter.InsertCommand.Parameters.Add(new SqlParameter("@RouteDescription", SqlDbType.NVarChar, 300, "routeDescription"));
-    adapter.InsertCommand.Parameters.Add(new SqlParameter("@DateCreated", SqlDbType.DateTime, 0, "dateCreated"));
-    adapter.InsertCommand.Parameters.Add(new SqlParameter("@DateModified", SqlDbType.DateTime, 0, "dateModified"));
-    //By default, @Identity takes value from id, but UpdateRowSource is set to OutputParameters, so id now takes value from @Identity
-    adapter.InsertCommand.Parameters.Add(new SqlParameter("@Identity", SqlDbType.BigInt, 0,"id") { Direction = ParameterDirection.Output });
-    adapter.InsertCommand.UpdatedRowSource = UpdateRowSource.OutputParameters;
-
-
-    //delete
-    table.Rows[2].Delete();
-    table.Rows[3].Delete();
-    adapter.DeleteCommand = new SqlCommand("Delete from [Route] where id = @Id", connection) { CommandType = CommandType.Text };
-    var parameterId = new SqlParameter()
-    {
-        ParameterName = "@Id",
-        SqlDbType = SqlDbType.BigInt,
-        SourceColumn = "id",
-        SourceVersion = DataRowVersion.Current
-    };
-    adapter.DeleteCommand.Parameters.Add(parameterId);
-    //must set so that the changes in db (which are what matter) are reflected in the DataSet
-    adapter.AcceptChangesDuringUpdate = true;
-    adapter.Update(routes, "Routes");
-
-    Console.WriteLine("After insert and update and delete:");
-    foreach (DataRow row in table.Rows)
-    {
-        Console.WriteLine($"id: {row["id"]}, routeDescription: {row["routeDescription"]}, [dateCreated]: {row["dateCreated"]}, , [dateModified]: {row["dateModified"]}");
-    }
+    adapter.InsertCommand.Parameters.AddRange(insertParameters.ToArray());
+    
+    return adapter;
 }
